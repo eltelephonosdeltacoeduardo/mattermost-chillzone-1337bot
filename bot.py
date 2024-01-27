@@ -116,9 +116,9 @@ class ScoreBot:
                         self.send_message(post['channel_id'], "Sorry, you can only score points once per day.")
                         self.react_with_smiley(post['post_id'], "zany_face")
                         return
-      
+
                     # Get current scores
-                    today_count = self.redis_client.keys(f"{post['channel_id']}:{day[:-2]}??:*")
+                    today_count = self.redis_client.keys(f"{post['channel_id']}:{day}:*")
                     num_scores = len(today_count)
 
                     # Get the score and reaction based on today's scores
