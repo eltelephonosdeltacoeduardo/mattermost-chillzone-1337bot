@@ -41,7 +41,7 @@ class ScoreBot:
                 {'points': 10, 'emoji': 'second_place_medal'},
                 {'points': 5, 'emoji': 'third_place_medal'},
                 # Fallback entry for too slow responses (0 points and a specific emoji)
-                {'points': 0, 'emoji': 'poop'}
+                {'points': 0, 'emoji': 'turtle'}
             ]
         }
 
