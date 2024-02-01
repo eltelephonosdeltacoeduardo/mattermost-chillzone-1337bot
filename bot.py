@@ -130,12 +130,16 @@ class ScoreBot:
                     points = score_info['points']
                     emoji = score_info['emoji']
 
-                    # React with the emoji
-                    self.react_with_smiley(post['post_id'], emoji)
+                    # Calculate milliseconds after 13:37:00
+                    cph_tz = pytz.timezone('Europe/Copenhagen')
+                    today_1337_cph = datetime.now(cph_tz).replace(hour=13, minute=37, second=0, microsecond=0)
+                    timestamp_dt = datetime.fromtimestamp(post['create_at'] / 1000, cph_tz)
+                    difference_s = round((timestamp_dt - today_1337_cph).total_seconds())
+                    difference_ms = int((timestamp_dt - today_1337_cph).total_seconds() * 1000)
 
                     # If points are 0, it's the too slow case
                     if points == 0:
-                        self.send_message(post['channel_id'], 'Too slow!')
+                        self.send_message(post['channel_id'], f"{post['username']} was too slow. {difference_s} seconds ({difference_ms} milliseconds) after 13:37")
                         return
                     else:
                         # Add daily score for the user, to keep track of daily points
@@ -144,15 +148,12 @@ class ScoreBot:
                         # Increment monthly score for the user, to keep track of monthly points
                         self.redis_client.incrby(keymonth, points)
 
-                        # Calculate milliseconds after 13:37:00
-                        cph_tz = pytz.timezone('Europe/Copenhagen')
-                        today_1337_cph = datetime.now(cph_tz).replace(hour=13, minute=37, second=0, microsecond=0)
-                        timestamp_dt = datetime.fromtimestamp(post['create_at'] / 1000, cph_tz)
-                        difference_s = round((timestamp_dt - today_1337_cph).total_seconds())
-                        difference_ms = int((timestamp_dt - today_1337_cph).total_seconds() * 1000)
-
                         # Output score message
                         self.send_message(post['channel_id'], f"{post['username']} scored {points} points! {difference_s} seconds ({difference_ms} milliseconds) after 13:37")
+
+                    # React with the emoji
+                    self.react_with_smiley(post['post_id'], emoji)
+
                 else:
                     self.send_message(post['channel_id'], "Does it look like 13:37 to you? If yes, contact your administrator and ask the person to check the NTP settings on your machine.")
                     self.react_with_smiley(post['post_id'], "poop")
@@ -164,7 +165,7 @@ class ScoreBot:
 
                 # Get all keys matching the current month
                 keys = self.redis_client.keys(key)
-        
+
                 if not keys:
                     self.send_message(post['channel_id'], 'The scoreboard is empty.')
                     return
