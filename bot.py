@@ -102,15 +102,15 @@ class ScoreBot:
             message = json.loads(event)
 
             # Output the message to the console along with the date and time
-            print(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-            print(message)
-            print()
+            self.logger.debug(message)
 
             if 'data' in message and 'post' in message['data']:
                 post = json.loads(message['data']['post'])
-
+                # only handle new posts in the channels we are interested in
+                self.logger.debug(f"Checking if we should handle the message")
+                self.logger.debug(f"channels: {self.config['MATTERMOST_CHANNELS']}")
                 if post['create_at'] == post['update_at'] and message['data']['channel_name'] in self.config['MATTERMOST_CHANNELS']:
-                # Pick out the relevant data from the post
+                    # Pick out the relevant data from the post
                     parsed = {}
                     parsed['create_at']     = post['create_at']
                     parsed['update_at']     = post['update_at']
@@ -124,6 +124,27 @@ class ScoreBot:
                     self.handle_message(parsed)
         except Exception as e:
             print(f"Error in event_handler: {e}")
+
+    def get_mental_lag_for_user_id(
+        self, channel_id, yearmonth, user_id
+    ) -> tuple[int, int]:
+        key = f"speed:{channel_id}:{yearmonth}:*:{user_id}"
+        keys = self.redis_client.keys(key)
+        self.logger.debug(f"keys: {keys}")
+        if keys:
+            total = 0
+            for k in keys:
+                total += int(self.redis_client.get(k))
+            average = int(total / len(keys))
+            min = 60000
+            for k in keys:
+                k_ms = int(self.redis_client.get(k))
+                if k_ms < min:
+                    min = k_ms
+            fastest = min
+            return (fastest, average)
+        else:
+            return (0, 0)
 
     def handle_message(self, post):
         try:
@@ -139,19 +160,23 @@ class ScoreBot:
                 self.react_with_smiley(post['post_id'], 'smile')
             # Handle the message - 1337
             elif message == "1337":
-                if post_time.strftime("%H") == "13" and post_time.strftime("%M") == "37":
-                #if True:
-                    day = post_time.strftime("%Y%m%d")
+                if self.debug or post_time.strftime("%H%M") == "1337":
+                    yearmonthday = post_time.strftime("%Y%m%d")
+                    yearmonth = post_time.strftime("%Y%m")
+                    day = post_time.strftime("%d")
 
-                    keyday = f"{post['channel_id']}:{day}:{post['user_id']}"
-                    keymonth = f"{post['channel_id']}:{day[:-2]}:{post['user_id']}"
+                    keyday = f"{post['channel_id']}:{yearmonthday}:{post['user_id']}"
+                    keyday_ms = f"speed:{post['channel_id']}:{yearmonth}:{day}:{post['user_id']}"
+                    keymonth = f"{post['channel_id']}:{yearmonth}:{post['user_id']}"
                     if self.redis_client.exists(keyday):
                         self.send_message(post['channel_id'], "Sorry, you can only score points once per day.")
                         self.react_with_smiley(post['post_id'], "zany_face")
                         return
 
                     # Get current scores
-                    today_count = self.redis_client.keys(f"{post['channel_id']}:{day}:*")
+                    today_count = self.redis_client.keys(
+                        f"{post['channel_id']}:{yearmonthday}:*"
+                    )
                     num_scores = len(today_count)
 
                     # Get the score and reaction based on today's scores
@@ -165,14 +190,23 @@ class ScoreBot:
 
                     # Calculate milliseconds after 13:37:00
                     cph_tz = pytz.timezone('Europe/Copenhagen')
-                    today_1337_cph = datetime.now(cph_tz).replace(hour=13, minute=37, second=0, microsecond=0)
+                    if self.debug:
+                        # if debug use the time from the post instead of the current time to ensure the correct time is used
+                        today_1337_cph = post_time.replace(second=0, microsecond=0)
+                    else:
+                        today_1337_cph = datetime.now(cph_tz).replace(
+                            hour=13, minute=37, second=0, microsecond=0
+                        )
                     timestamp_dt = datetime.fromtimestamp(post['create_at'] / 1000, cph_tz)
                     difference_s = round((timestamp_dt - today_1337_cph).total_seconds())
                     difference_ms = int((timestamp_dt - today_1337_cph).total_seconds() * 1000)
 
                     # If points are 0, it's the too slow case
                     if points == 0:
-                        self.send_message(post['channel_id'], f"{post['username']} was too slow. {difference_s} seconds ({difference_ms} milliseconds) after 13:37")
+                        self.send_message(
+                            post["channel_id"],
+                            f"{post['username']} was too slow. {difference_s} seconds ({difference_ms} milliseconds) after {today_1337_cph.strftime('%H:%M')}",
+                        )
                         return
                     else:
                         # Add daily score for the user, to keep track of daily points
@@ -181,11 +215,19 @@ class ScoreBot:
                         # Increment monthly score for the user, to keep track of monthly points
                         self.redis_client.incrby(keymonth, points)
 
+                        # Add the difference in milliseconds to redis to keep track of average/fastest speed
+                        if difference_ms >= 0:
+                            # add the daily speed
+                            self.redis_client.set(keyday_ms, difference_ms)
+
                         # Output score message
-                        self.send_message(post['channel_id'], f"{post['username']} scored {points} points! {difference_s} seconds ({difference_ms} milliseconds) after 13:37")
+                        self.send_message(
+                            post["channel_id"],
+                            f"{post['username']} scored {points} points! {difference_s} seconds ({difference_ms} milliseconds) after {today_1337_cph.strftime('%H:%M')}",
+                        )
 
                     # React with the emoji
-                    self.react_with_smiley(post['post_id'], emoji)
+                    self.react_with_smiley(post["post_id"], emoji)
 
                 else:
                     self.send_message(post['channel_id'], "Does it look like 13:37 to you? If yes, contact your administrator and ask the person to check the NTP settings on your machine.")
@@ -204,10 +246,13 @@ class ScoreBot:
                     return
 
                 scores = {}
-
+                speed = {}
                 # Calculate total scores for each user
                 for key in keys:
                     userid = key.split(':')[2]
+                    speed[userid] = self.get_mental_lag_for_user_id(
+                        post["channel_id"], current_month, userid
+                    )  # (fastest, average)
                     score = int(self.redis_client.get(key))
                     scores[userid] = scores.get(userid, 0) + score
 
@@ -221,9 +266,9 @@ class ScoreBot:
                     username = self.mattermost.users.get_user(user_id=userid)['username']
                     username = username[:1] + "\u200B" + username[1:]
                     if rank <= len(self.config['POINTS']):
-                        message += f":{self.config['POINTS'][rank-1]['emoji']}: {username}: {score} points\n"
+                        message += f":{self.config['POINTS'][rank-1]['emoji']}: {username}: {score} points (avg {speed.get(userid)[1]}ms / fastest {speed.get(userid)[0]}ms)\n"
                     else:
-                        message += f":{self.config['POINTS'][-1]['emoji']}: {username}: {score} points\n"
+                        message += f":{self.config['POINTS'][-1]['emoji']}: {username}: {score} points (avg {average_ms}ms / fastest {fastest_ms}ms)\n"
 
                 # Add last months winner
                 last_month = (datetime.now() - relativedelta(months=1)).strftime('%Y%m')
@@ -250,7 +295,77 @@ class ScoreBot:
             # Handle the message - .help
             elif message == ".help":
                 self.send_message(post['channel_id'], "Available commands:\n1337 - Score points\n.score - Show monthly scores")
+            elif message == ".clear":
+                if self.debug:
+                    # Clear all keys
+                    self.redis_client.flushall()
+            elif message == ".testdata":
+                if not self.debug:
+                    self.send_message(
+                        post["channel_id"],
+                        "This command is only available in debug mode",
+                    )
+                    return
+                else:
+                    self.send_message(
+                        post["channel_id"],
+                        "Adding test data for the current and previous month",
+                    )
+                import random
 
+                users = ["bottymcbotface", "chatgpt", "chatgpt-dev"]
+                # get user ids and add them to the user_ids list
+                user_ids = []
+                for user in users:
+                    user_ids.append(
+                        self.mattermost.users.get_user_by_username(user)["id"]
+                    )
+                # Add a test score for each user for the current month for 10 days from the beginning of the month
+                # by incrementing the data and add a score for each and then adding a speed random ms for each day for the user_id as well
+                yearmonthday = post_time.strftime("%Y%m%d")
+                yearmonth = post_time.strftime("%Y%m")
+                previous_yearmonth = (post_time - relativedelta(months=1)).strftime(
+                    "%Y%m"
+                )
+                previous_yearmonthday = (post_time - relativedelta(months=1)).strftime(
+                    "%Y%m%d"
+                )
+                day = post_time.strftime("%d")
+
+                keyday = f"{post['channel_id']}:{yearmonthday}:{post['user_id']}"
+                keyday_ms = (
+                    f"speed:{post['channel_id']}:{yearmonth}:{day}:{post['user_id']}"
+                )
+                keymonth = f"{post['channel_id']}:{yearmonth}:{post['user_id']}"
+                for user_id in user_ids:
+                    for i in range(1, 5):
+                        # current month
+                        score = random.choice([15, 10, 5, 0])
+                        self.redis_client.set(
+                            f"{post['channel_id']}:{yearmonthday[:-1]}{i}:{user_id}",
+                            score,
+                        )
+                        self.redis_client.incrby(
+                            f"{post['channel_id']}:{yearmonth}:{user_id}", score
+                        )
+                        self.redis_client.set(
+                            f"speed:{post['channel_id']}:{yearmonth}:0{i}:{user_id}",
+                            random.randint(10, 2000),
+                        )
+                        # previous month
+                        score = random.choice([15, 10, 5, 0])
+                        self.redis_client.set(
+                            f"{post['channel_id']}:{previous_yearmonthday[:-1]}{i}:{user_id}",
+                            score,
+                        )
+                        self.redis_client.incrby(
+                            f"{post['channel_id']}:{previous_yearmonth}:{user_id}",
+                            score,
+                        )
+                        self.redis_client.set(
+                            f"speed:{post['channel_id']}:{previous_yearmonth}:0{i}:{user_id}",
+                            random.randint(10, 2000),
+                        )
         except Exception as e:
             print(f"Error in handle_message: {e}")
 
