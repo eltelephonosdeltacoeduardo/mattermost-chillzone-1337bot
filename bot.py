@@ -10,6 +10,7 @@
 import json
 import asyncio
 import os
+import sys
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 import redis
@@ -24,28 +25,50 @@ load_dotenv()
 class ScoreBot:
     def __init__(self):
         # Config
+        # get a list of channels from the environment variable, or use a default list
+        channels_default = ["1337", "1337dev", "1337evenmoredev"]
+        channels = os.getenv("MATTERMOST_CHANNELS")
+        if channels:
+            # comma seperated list of channels
+            channels = channels.split(",")
+            # trim whitespace from the channel names
+            channels = [channel.strip() for channel in channels]
+        else:
+            channels = channels_default
         self.config = {
-            'REDIS_HOST': os.getenv('REDIS_HOST'),
-            'REDIS_PORT': int(os.getenv('REDIS_PORT')),
-            'MATTERMOST_URL': os.getenv('MATTERMOST_URL'),
-            'MATTERMOST_TOKEN': os.getenv('MATTERMOST_TOKEN'),
-            'MATTERMOST_SCHEME': os.getenv('MATTERMOST_SCHEME'),
-            'MATTERMOST_PORT': int(os.getenv('MATTERMOST_PORT')),
-            'MATTERMOST_CHANNELS':
-            [
-                '1337evenmoredev',
-                '1337dev',
-                '1337'
-            ],
-            'POINTS':
-            [
-                {'points': 15, 'emoji': 'first_place_medal'},
-                {'points': 10, 'emoji': 'second_place_medal'},
-                {'points': 5, 'emoji': 'third_place_medal'},
+            "REDIS_HOST": os.getenv("REDIS_HOST"),
+            "REDIS_PORT": int(os.getenv("REDIS_PORT")),
+            "MATTERMOST_URL": os.getenv("MATTERMOST_URL"),
+            "MATTERMOST_TOKEN": os.getenv("MATTERMOST_TOKEN"),
+            "MATTERMOST_SCHEME": os.getenv("MATTERMOST_SCHEME"),
+            "MATTERMOST_PORT": int(os.getenv("MATTERMOST_PORT")),
+            "MATTERMOST_CHANNELS": channels,
+            "DEBUG": int(os.getenv("DEBUG")),
+            "DRIVERDEBUG": int(os.getenv("DRIVERDEBUG")),
+            "POINTS": [
+                {"points": 15, "emoji": "first_place_medal"},
+                {"points": 10, "emoji": "second_place_medal"},
+                {"points": 5, "emoji": "third_place_medal"},
                 # Fallback entry for too slow responses (0 points and a specific emoji)
-                {'points': 0, 'emoji': 'turtle'}
-            ]
+                {"points": 0, "emoji": "turtle"},
+            ],
         }
+        self.debug = self.config["DEBUG"] if self.config["DEBUG"] else False
+        self.driverdebug = (
+            self.config["DRIVERDEBUG"] if self.config["DRIVERDEBUG"] else False
+        )
+
+        log_format: str = "[%(asctime)s][%(name)s][%(levelname)s] %(message)s"
+        log_date_format: str = "%Y-%m-%d %H:%M:%S"
+        logging.basicConfig(
+            **{
+                "stream": sys.stdout,
+                "format": log_format,
+                "datefmt": log_date_format,
+                "level": logging.DEBUG if self.debug else logging.INFO,
+            }
+        )
+        self.logger = logging.getLogger("ScoreBot")
 
         # Redis
         self.redis_client = redis.StrictRedis(
@@ -55,12 +78,20 @@ class ScoreBot:
         )
 
         # Mattermost
-        self.mattermost = Driver({
-            'url': self.config['MATTERMOST_URL'],
-            'token': self.config['MATTERMOST_TOKEN'],
-            'scheme': self.config['MATTERMOST_SCHEME'],
-            'port': self.config['MATTERMOST_PORT']
-        })
+        self.mattermost = Driver(
+            {
+                "url": self.config["MATTERMOST_URL"],
+                "token": self.config["MATTERMOST_TOKEN"],
+                "scheme": self.config["MATTERMOST_SCHEME"],
+                "port": self.config["MATTERMOST_PORT"],
+                "debug": self.driverdebug,
+            }
+        )
+        self.logger.debug(
+            f"config {self.config}",
+        )
+        self.logger.debug("Mattermost driver initialized")
+        self.logger.info("ScoreBot initialized")
 
     def run(self):
         self.mattermost.login()
