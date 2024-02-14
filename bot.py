@@ -265,7 +265,7 @@ class ScoreBot:
                     if rank <= len(self.config['POINTS']):
                         message += f":{self.config['POINTS'][rank-1]['emoji']}: {username}: {score} points (avg {speed.get(userid)[1]}ms / fastest {speed.get(userid)[0]}ms)\n"
                     else:
-                        message += f":{self.config['POINTS'][-1]['emoji']}: {username}: {score} points (avg {average_ms}ms / fastest {fastest_ms}ms)\n"
+                        message += f":{self.config['POINTS'][-1]['emoji']}: {username}: {score} points (avg {speed.get(userid)[1]}ms / fastest {speed.get(userid)[0]}ms)\n"
 
                 # Add last months winner
                 last_month = (datetime.now() - relativedelta(months=1)).strftime('%Y%m')
