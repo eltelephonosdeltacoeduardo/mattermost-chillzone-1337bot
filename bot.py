@@ -87,9 +87,6 @@ class ScoreBot:
                 "debug": self.driverdebug,
             }
         )
-        self.logger.debug(
-            f"config {self.config}",
-        )
         self.logger.debug("Mattermost driver initialized")
         self.logger.info("ScoreBot initialized")
 
