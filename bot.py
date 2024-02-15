@@ -18,6 +18,8 @@ from dotenv import load_dotenv
 from mattermostdriver import Driver
 import logging
 import ssl_fix
+import random
+from typingevent import TypingEvent
 
 load_dotenv()
 
@@ -52,6 +54,8 @@ class ScoreBot:
                 # Fallback entry for too slow responses (0 points and a specific emoji)
                 {"points": 0, "emoji": "turtle"},
             ],
+            "FEATURE_IS_TYPING": os.getenv("FEATURE_IS_TYPING", False).lower()
+            in ["true", "1"],
         }
         self.debug_early = self.config["DEBUG_EARLY"] if self.config["DEBUG_EARLY"] else False
         self.debug = self.config["DEBUG"] if self.config["DEBUG"] else False
@@ -120,8 +124,60 @@ class ScoreBot:
                     parsed['channel_name']  = message['data']['channel_name']
 
                     self.handle_message(parsed)
+            elif "event" in message and message["event"] == "typing":
+                if self.config["FEATURE_IS_TYPING"]:
+                    typing_event = TypingEvent(message, self)
+                    self.handle_typing_event(typing_event)
+
         except Exception as e:
             print(f"Error in event_handler: {e}")
+
+    def handle_typing_event(self, event):
+        """Handle typing events"""
+        self.logger.debug(
+            f"User {event.username} is typing in channel {event.channel_name} at {event.time}"
+        )
+        random_entering_quotes = [
+            "<user> has entered the game...",
+            "<user> is getting ready to play 1337!",
+            "The game is on <user>!",
+            "<user> remember the only rule about 1337, you do not talk about 1337!",
+            "if <user> is typing, it must be 1337 time!",
+            "I'm sorry <user>, I'm afraid I can't do that. It's 1337 time!",
+            "If you build it, <user> will come. It's 1337 time!",
+            "It's the final countdown <user>!",
+            "I feel a disturbance in the force <user>. It's 1337 time!",
+            "Look who is finally here <user>!",
+            "Look who bothered to show up today, <user>!",
+            "If <user> is looking fly, you must comply. It's 1337 time!",
+            "I'm sorry <user> i am running out of clever things to say. It's 1337 time!",
+        ]
+        # if channel not in the list of channels, return
+        if event.channel_name not in self.config["MATTERMOST_CHANNELS"]:
+            return
+        # if time is 1336, send a random quote to the channel"
+        if self.debug or event.time.strftime("%H%M") == "1336":
+            # add player to the game list if not already there
+            yesterdays_key = (event.time - timedelta(days=1)).strftime(
+                "%Y%m%d"
+            ) + event.channel_id
+            today_key = event.time.strftime("%Y%m%d") + event.channel_id
+            if not hasattr(self, "players"):
+                self.players = {}
+
+            if not self.players.get(today_key):
+                # create a list for the day
+                self.players[today_key] = []
+                # unset the list from the previous day
+                if self.players.get(yesterdays_key):
+                    self.players.pop(yesterdays_key)
+            if event.username not in self.players.get(today_key):
+                self.players[today_key].append(event.username)
+                # replace <user> with the username
+                random_quote = random.choice(random_entering_quotes).replace(
+                    "<user>", event.username_no_hl
+                )
+                self.send_message(event.channel_id, random_quote)
 
     def get_mental_lag_for_user_id(
         self, channel_id, yearmonth, user_id
@@ -311,11 +367,46 @@ class ScoreBot:
 
             # Handle the message - .help
             elif message == ".help":
-                self.send_message(post['channel_id'], "Available commands:\n1337 - Score points\n.score - Show monthly scores")
+                self.send_message(
+                    post["channel_id"],
+                    "Available commands:\n1337 - Score points\n.score - Show monthly scores.",
+                )
+                if self.debug:
+                    self.send_message(
+                        post["channel_id"],
+                        "Debug commands:\n.clear - Clear all keys\n.testdata - Add test data for the current and previous month",
+                    )
             elif message == ".clear":
                 if self.debug:
                     # Clear all keys
                     self.redis_client.flushall()
+            elif message == ".testjoin":
+                """Test the join message"""
+                users = ["bottymcbotface", "chatgpt", "chatgpt-dev"]
+                # get user ids and add them to the user_ids list
+                user_ids = []
+                for user in users:
+                    user_ids.append(self.mattermost.users.get_user_by_username(user)["id"])
+                # create a fake typing event for the following users
+                for user_id in user_ids:
+                    event = {
+                        "event": "typing",
+                        "data": {
+                            "parent_id": "",
+                            "user_id": user_id,
+                        },
+                        "broadcast": {
+                            "omit_users": {user_id: True},
+                            "user_id": "",
+                            "channel_id": post["channel_id"],
+                            "team_id": "",
+                            "connection_id": "",
+                            "omit_connection_id": "",
+                        },
+                        "seq": 2,
+                    }
+                    typing_event = TypingEvent(event, self)
+                    self.handle_typing_event(typing_event)
             elif message == ".testdata":
                 if not self.debug:
                     self.send_message(
@@ -402,6 +493,34 @@ class ScoreBot:
             "emoji_name": smiley_emoji
         }
         self.mattermost.reactions.create_reaction(options)
+
+    def get_channel(self, channel_id, no_cache=False, expire_after=60 * 60 * 25):
+        """get_channel from mattermost by channel_id and cache the result in redis or fetch from redis if it exists"""
+        if no_cache:
+            return self.mattermost.channels.get_channel(channel_id=channel_id)
+        channel = self.redis_client.get(f"channel:{channel_id}")
+        if channel:
+            return json.loads(channel)
+        else:
+            channel = self.mattermost.channels.get_channel(channel_id=channel_id)
+            self.redis_client.set(
+                f"channel:{channel_id}", json.dumps(channel), ex=expire_after
+            )
+            return channel
+
+    def get_user(self, user_id, no_cache=False, expire_after=60 * 60 * 25):
+        """get_user from mattermost by user_id and cache the result in redis or fetch from redis if it exists"""
+        expire_after = 60 * 60 * 25  # 25 hours
+        if no_cache:
+            return self.mattermost.users.get_user(user_id=user_id)
+        user = self.redis_client.get(f"user:{user_id}")
+        if user:
+            return json.loads(user)
+        else:
+            user = self.mattermost.users.get_user(user_id=user_id)
+            self.redis_client.set(f"user:{user_id}", json.dumps(user), ex=expire_after)
+            return user
+
 
 if __name__ == "__main__":
     bot = ScoreBot()
