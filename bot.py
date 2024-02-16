@@ -155,24 +155,22 @@ class ScoreBot:
         # if channel not in the list of channels, return
         if event.channel_name not in self.config["MATTERMOST_CHANNELS"]:
             return
+
         # if time is 1336, send a random quote to the channel"
         if self.debug or event.time.strftime("%H%M") == "1336":
-            # add player to the game list if not already there
+            # get the key for the previous day and the current day
             yesterdays_key = (event.time - timedelta(days=1)).strftime(
                 "%Y%m%d"
             ) + event.channel_id
             today_key = event.time.strftime("%Y%m%d") + event.channel_id
-            if not hasattr(self, "players"):
-                self.players = {}
 
-            if not self.players.get(today_key):
-                # create a list for the day
-                self.players[today_key] = []
-                # unset the list from the previous day
-                if self.players.get(yesterdays_key):
-                    self.players.pop(yesterdays_key)
-            if event.username not in self.players.get(today_key):
-                self.players[today_key].append(event.username)
+            # cleanup the previous day's set
+            if self.redis_client.exists(yesterdays_key):
+                self.redis_client.delete(yesterdays_key)
+
+            # if the user is not in the set, add the user to the set and send a random quote
+            if not self.redis_client.sismember(today_key, event.username):
+                self.redis_client.sadd(today_key, event.username)
                 # replace <user> with the username
                 random_quote = random.choice(random_entering_quotes).replace(
                     "<user>", event.username_no_hl
