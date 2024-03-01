@@ -238,34 +238,33 @@ class ScoreBot:
                 # Get all keys matching the current month
                 keys = self.redis_client.keys(key)
 
-                if not keys:
-                    self.send_message(post['channel_id'], 'The scoreboard is empty.')
-                    return
+                if keys:
+                    scores = {}
+                    speed = {}
+                    # Calculate total scores for each user
+                    for key in keys:
+                        userid = key.split(':')[2]
+                        speed[userid] = self.get_mental_lag_for_user_id(
+                            post["channel_id"], current_month, userid
+                        )  # (fastest, average)
+                        score = int(self.redis_client.get(key))
+                        scores[userid] = scores.get(userid, 0) + score
 
-                scores = {}
-                speed = {}
-                # Calculate total scores for each user
-                for key in keys:
-                    userid = key.split(':')[2]
-                    speed[userid] = self.get_mental_lag_for_user_id(
-                        post["channel_id"], current_month, userid
-                    )  # (fastest, average)
-                    score = int(self.redis_client.get(key))
-                    scores[userid] = scores.get(userid, 0) + score
+                    # Sort scores in descending order
+                    sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
-                # Sort scores in descending order
-                sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+                    # Generate and send the score message
+                    message = 'This months scoreboard:\n'
 
-                # Generate and send the score message
-                message = 'This months scoreboard:\n'
-
-                for rank, (userid, score) in enumerate(sorted_scores, start=1):
-                    username = self.mattermost.users.get_user(user_id=userid)['username']
-                    username = username[:1] + "\u200B" + username[1:]
-                    if rank <= len(self.config['POINTS']):
-                        message += f":{self.config['POINTS'][rank-1]['emoji']}: {username}: {score} points (avg {speed.get(userid)[1]}ms / fastest {speed.get(userid)[0]}ms)\n"
-                    else:
-                        message += f":{self.config['POINTS'][-1]['emoji']}: {username}: {score} points (avg {speed.get(userid)[1]}ms / fastest {speed.get(userid)[0]}ms)\n"
+                    for rank, (userid, score) in enumerate(sorted_scores, start=1):
+                        username = self.mattermost.users.get_user(user_id=userid)['username']
+                        username = username[:1] + "\u200B" + username[1:]
+                        if rank <= len(self.config['POINTS']):
+                            message += f":{self.config['POINTS'][rank-1]['emoji']}: {username}: {score} points (avg {speed.get(userid)[1]}ms / fastest {speed.get(userid)[0]}ms)\n"
+                        else:
+                            message += f":{self.config['POINTS'][-1]['emoji']}: {username}: {score} points (avg {speed.get(userid)[1]}ms / fastest {speed.get(userid)[0]}ms)\n"
+                else:
+                    message = "The scoreboard is empty."
 
                 # Add last months winner
                 last_month = (datetime.now() - relativedelta(months=1)).strftime('%Y%m')
