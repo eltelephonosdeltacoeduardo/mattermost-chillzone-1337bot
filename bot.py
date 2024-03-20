@@ -5,7 +5,6 @@
 ###########################
 
 # TODO: Use local time only?
-# IDEA: Log 1337-text timestamp in redis for each user, for each day. Use that to calculate average speed.
 
 import json
 import asyncio
@@ -44,6 +43,7 @@ class ScoreBot:
             "MATTERMOST_PORT": int(os.getenv("MATTERMOST_PORT")),
             "MATTERMOST_CHANNELS": channels,
             "DEBUG": int(os.getenv("DEBUG")),
+            "DEBUG_EARLY": int(os.getenv("DEBUG_EARLY")),
             "DRIVERDEBUG": int(os.getenv("DRIVERDEBUG")),
             "POINTS": [
                 {"points": 15, "emoji": "first_place_medal"},
@@ -53,6 +53,7 @@ class ScoreBot:
                 {"points": 0, "emoji": "turtle"},
             ],
         }
+        self.debug_early = self.config["DEBUG_EARLY"] if self.config["DEBUG_EARLY"] else False
         self.debug = self.config["DEBUG"] if self.config["DEBUG"] else False
         self.driverdebug = (
             self.config["DRIVERDEBUG"] if self.config["DRIVERDEBUG"] else False
@@ -143,6 +144,25 @@ class ScoreBot:
         else:
             return (0, 0)
 
+    def handle_early(self, post, post_time):
+        """Handle the case where the user is early."""
+        cph_tz = pytz.timezone('Europe/Copenhagen')
+        if self.debug_early:
+            # if debug use the time from the post instead of the current time to ensure the correct time is used
+            today_1336_cph = post_time.replace(second=0, microsecond=0)
+        else:
+            today_1336_cph = datetime.now(cph_tz).replace(
+                hour=13, minute=37, second=0, microsecond=0
+            )
+        timestamp_dt = datetime.fromtimestamp(post['create_at'] / 1000, cph_tz)
+        difference_s = round((timestamp_dt - today_1336_cph).total_seconds())
+        difference_ms = int((timestamp_dt - today_1336_cph).total_seconds() * 1000)
+        self.send_message(
+            post["channel_id"],
+            f"{post['username']} is early. {difference_s} seconds ({difference_ms} milliseconds) before {today_1336_cph.strftime('%H:%M')}",
+        )
+        self.react_with_smiley(post['post_id'], "poop")
+
     def handle_message(self, post):
         try:
             message = post['message'].lower()
@@ -157,6 +177,11 @@ class ScoreBot:
                 self.react_with_smiley(post['post_id'], 'smile')
             # Handle the message - 1337
             elif message == "1337":
+                if post_time.strftime("%H%M") == "1336":
+                    # handle the case where the user is early
+                    self.handle_early(post,post_time)
+                    # lets just return here, we don't want to score points for being early
+                    return
                 if self.debug or post_time.strftime("%H%M") == "1337":
                     yearmonthday = post_time.strftime("%Y%m%d")
                     yearmonth = post_time.strftime("%Y%m")
@@ -225,10 +250,6 @@ class ScoreBot:
 
                     # React with the emoji
                     self.react_with_smiley(post["post_id"], emoji)
-
-                else:
-                    self.send_message(post['channel_id'], "Does it look like 13:37 to you? If yes, contact your administrator and ask the person to check the NTP settings on your machine.")
-                    self.react_with_smiley(post['post_id'], "poop")
             # Handle the message - .score
             elif message == ".score":
                 # Prepare the key name
