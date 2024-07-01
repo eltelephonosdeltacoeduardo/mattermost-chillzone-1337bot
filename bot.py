@@ -5,7 +5,6 @@
 ###########################
 
 # TODO: Use local time only?
-# IDEA: Log 1337-text timestamp in redis for each user, for each day. Use that to calculate average speed.
 
 import json
 import asyncio
@@ -19,6 +18,8 @@ from dotenv import load_dotenv
 from mattermostdriver import Driver
 import logging
 import ssl_fix
+import random
+from typingevent import TypingEvent
 
 load_dotenv()
 
@@ -43,8 +44,10 @@ class ScoreBot:
             "MATTERMOST_SCHEME": os.getenv("MATTERMOST_SCHEME"),
             "MATTERMOST_PORT": int(os.getenv("MATTERMOST_PORT")),
             "MATTERMOST_CHANNELS": channels,
-            "DEBUG": int(os.getenv("DEBUG")),
-            "DRIVERDEBUG": int(os.getenv("DRIVERDEBUG")),
+            "DEBUG": int(os.getenv("DEBUG", 0)),
+            "DEBUG_EARLY": int(os.getenv("DEBUG_EARLY", "0")),
+            "DEBUG_TYPING": int(os.getenv("DEBUG_TYPING", "0")),
+            "DRIVERDEBUG": int(os.getenv("DRIVERDEBUG",0)),
             "POINTS": [
                 {"points": 15, "emoji": "first_place_medal"},
                 {"points": 10, "emoji": "second_place_medal"},
@@ -52,7 +55,14 @@ class ScoreBot:
                 # Fallback entry for too slow responses (0 points and a specific emoji)
                 {"points": 0, "emoji": "turtle"},
             ],
+            "FEATURE_IS_TYPING": os.getenv("FEATURE_IS_TYPING", "0").lower()
+            in ["true", "1"],
+            "FEATURE_IS_EARLY": os.getenv("FEATURE_IS_EARLY", "0").lower()
+            in ["true", "1"],
+
         }
+        self.debug_early = self.config["DEBUG_EARLY"] if self.config["DEBUG_EARLY"] else False
+        self.debug_typing = self.config["DEBUG_TYPING"] if self.config["DEBUG_TYPING"] else False
         self.debug = self.config["DEBUG"] if self.config["DEBUG"] else False
         self.driverdebug = (
             self.config["DRIVERDEBUG"] if self.config["DRIVERDEBUG"] else False
@@ -119,8 +129,58 @@ class ScoreBot:
                     parsed['channel_name']  = message['data']['channel_name']
 
                     self.handle_message(parsed)
+            elif "event" in message and message["event"] == "typing":
+                if self.config["FEATURE_IS_TYPING"]:
+                    typing_event = TypingEvent(message, self)
+                    self.handle_typing_event(typing_event)
+
         except Exception as e:
             print(f"Error in event_handler: {e}")
+
+    def handle_typing_event(self, event):
+        """Handle typing events"""
+        self.logger.debug(
+            f"User {event.username} is typing in channel {event.channel_name} at {event.time}"
+        )
+        random_entering_quotes = [
+            "<user> has entered the game...",
+            "<user> is getting ready to play 1337!",
+            "The game is on <user>!",
+            "<user> remember the only rule about 1337, you do not talk about 1337!",
+            "if <user> is typing, it must be 1337 time!",
+            "I'm sorry <user>, I'm afraid I can't do that. It's 1337 time!",
+            "If you build it, <user> will come. It's 1337 time!",
+            "It's the final countdown <user>!",
+            "I feel a disturbance in the force <user>. It's 1337 time!",
+            "Look who is finally here <user>!",
+            "Look who bothered to show up today, <user>!",
+            "If <user> is looking fly, you must comply. It's 1337 time!",
+            "I'm sorry <user> i am running out of clever things to say. It's 1337 time!",
+        ]
+        # if channel not in the list of channels, return
+        if event.channel_name not in self.config["MATTERMOST_CHANNELS"]:
+            return
+
+        # if time is 1336, send a random quote to the channel"
+        if self.debug_early or event.time.strftime("%H%M") == "1336":
+            # get the key for the previous day and the current day
+            yesterdays_key = (event.time - timedelta(days=1)).strftime(
+                "%Y%m%d"
+            ) + event.channel_id
+            today_key = event.time.strftime("%Y%m%d") + event.channel_id
+
+            # cleanup the previous day's set
+            if self.redis_client.exists(yesterdays_key):
+                self.redis_client.delete(yesterdays_key)
+
+            # if the user is not in the set, add the user to the set and send a random quote
+            if not self.redis_client.sismember(today_key, event.username):
+                self.redis_client.sadd(today_key, event.username)
+                # replace <user> with the username
+                random_quote = random.choice(random_entering_quotes).replace(
+                    "<user>", f"@{event.username_no_hl}"
+                )
+                self.send_message(event.channel_id, random_quote)
 
     def get_mental_lag_for_user_id(
         self, channel_id, yearmonth, user_id
@@ -143,9 +203,28 @@ class ScoreBot:
         else:
             return (0, 0)
 
+    def handle_early(self, post, post_time):
+        """Handle the case where the user is early."""
+        cph_tz = pytz.timezone('Europe/Copenhagen')
+        if self.debug_early:
+            # if debug use the time from the post instead of the current time to ensure the correct time is used
+            today_1336_cph = post_time.replace(second=0, microsecond=0)
+        else:
+            today_1336_cph = datetime.now(cph_tz).replace(
+                hour=13, minute=37, second=0, microsecond=0
+            )
+        timestamp_dt = datetime.fromtimestamp(post['create_at'] / 1000, cph_tz)
+        difference_s = round((timestamp_dt - today_1336_cph).total_seconds())
+        difference_ms = int((timestamp_dt - today_1336_cph).total_seconds() * 1000)
+        self.send_message(
+            post["channel_id"],
+            f"{post['username']} is early. {difference_s} seconds ({difference_ms} milliseconds) before {today_1336_cph.strftime('%H:%M')}",
+        )
+        self.react_with_smiley(post['post_id'], "poop")
+
     def handle_message(self, post):
         try:
-            message = post['message'].lower()
+            message = post['message'].lower().strip()
 
             # Convert the post unix timestamp to Europe/Copenhagen timezone
             post_time = datetime.fromtimestamp(post['create_at']/1000).astimezone(pytz.timezone('Europe/Copenhagen'))
@@ -156,7 +235,12 @@ class ScoreBot:
                 self.send_message(post['channel_id'], message_text)
                 self.react_with_smiley(post['post_id'], 'smile')
             # Handle the message - 1337
-            elif message == "1337":
+            elif message == "1337" or (self.debug and message == ".testearly"):
+                if self.config["FEATURE_IS_EARLY"] and message == ".testearly" or post_time.strftime("%H%M") == "1336":
+                    # handle the case where the user is early
+                    self.handle_early(post,post_time)
+                    # lets just return here, we don't want to score points for being early
+                    return
                 if self.debug or post_time.strftime("%H%M") == "1337":
                     yearmonthday = post_time.strftime("%Y%m%d")
                     yearmonth = post_time.strftime("%Y%m")
@@ -225,10 +309,6 @@ class ScoreBot:
 
                     # React with the emoji
                     self.react_with_smiley(post["post_id"], emoji)
-
-                else:
-                    self.send_message(post['channel_id'], "Does it look like 13:37 to you? If yes, contact your administrator and ask the person to check the NTP settings on your machine.")
-                    self.react_with_smiley(post['post_id'], "poop")
             # Handle the message - .score
             elif message == ".score":
                 # Prepare the key name
@@ -290,11 +370,52 @@ class ScoreBot:
 
             # Handle the message - .help
             elif message == ".help":
-                self.send_message(post['channel_id'], "Available commands:\n1337 - Score points\n.score - Show monthly scores")
+                self.send_message(
+                    post["channel_id"],
+                    "Available commands:\n1337 - Score points\n.score - Show monthly scores.",
+                )
+                if self.debug:
+                    self.send_message(
+                        post["channel_id"],
+                        "Debug commands:\n\
+                        .clear - Clear all keys\n\
+                        .testdata - Add test data for the current and previous month\n.testjoin - Test the join message\n\
+                        .testearly - Test the early message\n\
+                        .testjoin - Test the join message\n\
+                        ",
+                    )
             elif message == ".clear":
                 if self.debug:
                     # Clear all keys
                     self.redis_client.flushall()
+                    self.send_message(post["channel_id"], "All keys cleared")
+            elif message == ".testjoin":
+                """Test the join message"""
+                users = ["bottymcbotface", "chatgpt", "chatgpt-dev"]
+                # get user ids and add them to the user_ids list
+                user_ids = []
+                for user in users:
+                    user_ids.append(self.mattermost.users.get_user_by_username(user)["id"])
+                # create a fake typing event for the following users
+                for user_id in user_ids:
+                    event = {
+                        "event": "typing",
+                        "data": {
+                            "parent_id": "",
+                            "user_id": user_id,
+                        },
+                        "broadcast": {
+                            "omit_users": {user_id: True},
+                            "user_id": "",
+                            "channel_id": post["channel_id"],
+                            "team_id": "",
+                            "connection_id": "",
+                            "omit_connection_id": "",
+                        },
+                        "seq": 2,
+                    }
+                    typing_event = TypingEvent(event, self)
+                    self.handle_typing_event(typing_event)
             elif message == ".testdata":
                 if not self.debug:
                     self.send_message(
@@ -381,6 +502,34 @@ class ScoreBot:
             "emoji_name": smiley_emoji
         }
         self.mattermost.reactions.create_reaction(options)
+
+    def get_channel(self, channel_id, no_cache=False, expire_after=60 * 60 * 25):
+        """get_channel from mattermost by channel_id and cache the result in redis or fetch from redis if it exists"""
+        if no_cache:
+            return self.mattermost.channels.get_channel(channel_id=channel_id)
+        channel = self.redis_client.get(f"channel:{channel_id}")
+        if channel:
+            return json.loads(channel)
+        else:
+            channel = self.mattermost.channels.get_channel(channel_id=channel_id)
+            self.redis_client.set(
+                f"channel:{channel_id}", json.dumps(channel), ex=expire_after
+            )
+            return channel
+
+    def get_user(self, user_id, no_cache=False, expire_after=60 * 60 * 25):
+        """get_user from mattermost by user_id and cache the result in redis or fetch from redis if it exists"""
+        expire_after = 60 * 60 * 25  # 25 hours
+        if no_cache:
+            return self.mattermost.users.get_user(user_id=user_id)
+        user = self.redis_client.get(f"user:{user_id}")
+        if user:
+            return json.loads(user)
+        else:
+            user = self.mattermost.users.get_user(user_id=user_id)
+            self.redis_client.set(f"user:{user_id}", json.dumps(user), ex=expire_after)
+            return user
+
 
 if __name__ == "__main__":
     bot = ScoreBot()
