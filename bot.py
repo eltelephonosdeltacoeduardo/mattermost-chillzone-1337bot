@@ -219,7 +219,7 @@ class ScoreBot:
 
     def handle_message(self, post):
         try:
-            message = post['message'].lower()
+            message = post['message'].lower().strip()
 
             # Convert the post unix timestamp to Europe/Copenhagen timezone
             post_time = datetime.fromtimestamp(post['create_at']/1000).astimezone(pytz.timezone('Europe/Copenhagen'))
@@ -230,8 +230,8 @@ class ScoreBot:
                 self.send_message(post['channel_id'], message_text)
                 self.react_with_smiley(post['post_id'], 'smile')
             # Handle the message - 1337
-            elif message == "1337":
-                if post_time.strftime("%H%M") == "1336":
+            elif message == "1337" or (self.debug and message == ".testearly"):
+                if message == ".testearly" or post_time.strftime("%H%M") == "1336":
                     # handle the case where the user is early
                     self.handle_early(post,post_time)
                     # lets just return here, we don't want to score points for being early
@@ -378,6 +378,7 @@ class ScoreBot:
                 if self.debug:
                     # Clear all keys
                     self.redis_client.flushall()
+                    self.send_message(post["channel_id"], "All keys cleared")
             elif message == ".testjoin":
                 """Test the join message"""
                 users = ["bottymcbotface", "chatgpt", "chatgpt-dev"]
