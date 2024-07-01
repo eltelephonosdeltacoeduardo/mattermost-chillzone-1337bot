@@ -46,6 +46,7 @@ class ScoreBot:
             "MATTERMOST_CHANNELS": channels,
             "DEBUG": int(os.getenv("DEBUG")),
             "DEBUG_EARLY": int(os.getenv("DEBUG_EARLY")),
+            "DEBUG_TYPING": int(os.getenv("DEBUG_TYPING")),
             "DRIVERDEBUG": int(os.getenv("DRIVERDEBUG")),
             "POINTS": [
                 {"points": 15, "emoji": "first_place_medal"},
@@ -56,8 +57,12 @@ class ScoreBot:
             ],
             "FEATURE_IS_TYPING": os.getenv("FEATURE_IS_TYPING", False).lower()
             in ["true", "1"],
+            "FEATURE_IS_EARLY": os.getenv("FEATURE_IS_EARLY", False).lower()
+            in ["true", "1"],
+
         }
         self.debug_early = self.config["DEBUG_EARLY"] if self.config["DEBUG_EARLY"] else False
+        self.debug_typing = self.config["DEBUG_TYPING"] if self.config["DEBUG_TYPING"] else False
         self.debug = self.config["DEBUG"] if self.config["DEBUG"] else False
         self.driverdebug = (
             self.config["DRIVERDEBUG"] if self.config["DRIVERDEBUG"] else False
@@ -157,7 +162,7 @@ class ScoreBot:
             return
 
         # if time is 1336, send a random quote to the channel"
-        if self.debug or event.time.strftime("%H%M") == "1336":
+        if self.debug_early or event.time.strftime("%H%M") == "1336":
             # get the key for the previous day and the current day
             yesterdays_key = (event.time - timedelta(days=1)).strftime(
                 "%Y%m%d"
@@ -173,7 +178,7 @@ class ScoreBot:
                 self.redis_client.sadd(today_key, event.username)
                 # replace <user> with the username
                 random_quote = random.choice(random_entering_quotes).replace(
-                    "<user>", event.username_no_hl
+                    "<user>", f"@{event.username_no_hl}"
                 )
                 self.send_message(event.channel_id, random_quote)
 
@@ -231,7 +236,7 @@ class ScoreBot:
                 self.react_with_smiley(post['post_id'], 'smile')
             # Handle the message - 1337
             elif message == "1337" or (self.debug and message == ".testearly"):
-                if message == ".testearly" or post_time.strftime("%H%M") == "1336":
+                if self.config["FEATURE_IS_EARLY"] and message == ".testearly" or post_time.strftime("%H%M") == "1336":
                     # handle the case where the user is early
                     self.handle_early(post,post_time)
                     # lets just return here, we don't want to score points for being early
@@ -372,7 +377,12 @@ class ScoreBot:
                 if self.debug:
                     self.send_message(
                         post["channel_id"],
-                        "Debug commands:\n.clear - Clear all keys\n.testdata - Add test data for the current and previous month",
+                        "Debug commands:\n\
+                        .clear - Clear all keys\n\
+                        .testdata - Add test data for the current and previous month\n.testjoin - Test the join message\n\
+                        .testearly - Test the early message\n\
+                        .testjoin - Test the join message\n\
+                        ",
                     )
             elif message == ".clear":
                 if self.debug:
