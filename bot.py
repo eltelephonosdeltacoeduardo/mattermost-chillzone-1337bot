@@ -44,10 +44,10 @@ class ScoreBot:
             "MATTERMOST_SCHEME": os.getenv("MATTERMOST_SCHEME"),
             "MATTERMOST_PORT": int(os.getenv("MATTERMOST_PORT")),
             "MATTERMOST_CHANNELS": channels,
-            "DEBUG": int(os.getenv("DEBUG")),
-            "DEBUG_EARLY": int(os.getenv("DEBUG_EARLY")),
-            "DEBUG_TYPING": int(os.getenv("DEBUG_TYPING")),
-            "DRIVERDEBUG": int(os.getenv("DRIVERDEBUG")),
+            "DEBUG": int(os.getenv("DEBUG", 0)),
+            "DEBUG_EARLY": int(os.getenv("DEBUG_EARLY", "0")),
+            "DEBUG_TYPING": int(os.getenv("DEBUG_TYPING", "0")),
+            "DRIVERDEBUG": int(os.getenv("DRIVERDEBUG"), 0),
             "POINTS": [
                 {"points": 15, "emoji": "first_place_medal"},
                 {"points": 10, "emoji": "second_place_medal"},
@@ -55,9 +55,9 @@ class ScoreBot:
                 # Fallback entry for too slow responses (0 points and a specific emoji)
                 {"points": 0, "emoji": "turtle"},
             ],
-            "FEATURE_IS_TYPING": os.getenv("FEATURE_IS_TYPING", False).lower()
+            "FEATURE_IS_TYPING": os.getenv("FEATURE_IS_TYPING", "0").lower()
             in ["true", "1"],
-            "FEATURE_IS_EARLY": os.getenv("FEATURE_IS_EARLY", False).lower()
+            "FEATURE_IS_EARLY": os.getenv("FEATURE_IS_EARLY", "0").lower()
             in ["true", "1"],
 
         }
