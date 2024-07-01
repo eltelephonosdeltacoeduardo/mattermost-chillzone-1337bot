@@ -47,7 +47,7 @@ class ScoreBot:
             "DEBUG": int(os.getenv("DEBUG", 0)),
             "DEBUG_EARLY": int(os.getenv("DEBUG_EARLY", "0")),
             "DEBUG_TYPING": int(os.getenv("DEBUG_TYPING", "0")),
-            "DRIVERDEBUG": int(os.getenv("DRIVERDEBUG"), 0),
+            "DRIVERDEBUG": int(os.getenv("DRIVERDEBUG",0)),
             "POINTS": [
                 {"points": 15, "emoji": "first_place_medal"},
                 {"points": 10, "emoji": "second_place_medal"},
