@@ -39,15 +39,16 @@ class ScoreBot:
         self.config = {
             "REDIS_HOST": os.getenv("REDIS_HOST"),
             "REDIS_PORT": int(os.getenv("REDIS_PORT")),
+            "REDIS_DB": int(os.getenv("REDIS_DB", "0")),
             "MATTERMOST_URL": os.getenv("MATTERMOST_URL"),
             "MATTERMOST_TOKEN": os.getenv("MATTERMOST_TOKEN"),
             "MATTERMOST_SCHEME": os.getenv("MATTERMOST_SCHEME"),
             "MATTERMOST_PORT": int(os.getenv("MATTERMOST_PORT")),
             "MATTERMOST_CHANNELS": channels,
-            "DEBUG": int(os.getenv("DEBUG", 0)),
+            "DEBUG": int(os.getenv("DEBUG", "0")),
             "DEBUG_EARLY": int(os.getenv("DEBUG_EARLY", "0")),
             "DEBUG_TYPING": int(os.getenv("DEBUG_TYPING", "0")),
-            "DRIVERDEBUG": int(os.getenv("DRIVERDEBUG",0)),
+            "DRIVERDEBUG": int(os.getenv("DRIVERDEBUG", "0")),
             "POINTS": [
                 {"points": 15, "emoji": "first_place_medal"},
                 {"points": 10, "emoji": "second_place_medal"},
@@ -67,6 +68,7 @@ class ScoreBot:
         self.driverdebug = (
             self.config["DRIVERDEBUG"] if self.config["DRIVERDEBUG"] else False
         )
+        
 
         log_format: str = "[%(asctime)s][%(name)s][%(levelname)s] %(message)s"
         log_date_format: str = "%Y-%m-%d %H:%M:%S"
@@ -84,7 +86,8 @@ class ScoreBot:
         self.redis_client = redis.StrictRedis(
             host=self.config['REDIS_HOST'],
             port=self.config['REDIS_PORT'],
-            decode_responses=True
+            decode_responses=True,
+            db=self.config["REDIS_DB"]
         )
 
         # Mattermost
